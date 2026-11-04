@@ -141,16 +141,7 @@ def parse_time_range(text: str) -> tuple[dt_time, dt_time] | None:
 def local_range_to_utc(
     source_start: datetime, start_time: dt_time, end_time: dt_time
 ) -> tuple[datetime, datetime]:
-    candidates = [source_start.date(), source_start.astimezone(OSLO_TZ).date()]
-    local_date = min(
-        candidates,
-        key=lambda candidate: abs(
-            (
-                datetime.combine(candidate, start_time, tzinfo=OSLO_TZ)
-                - source_start
-            ).total_seconds()
-        ),
-    )
+    local_date = source_start.astimezone(OSLO_TZ).date()
     local_start = datetime.combine(local_date, start_time, tzinfo=OSLO_TZ)
     local_end = datetime.combine(local_date, end_time, tzinfo=OSLO_TZ)
     if local_end <= local_start:
@@ -298,7 +289,7 @@ class ProgramScraper:
             if duration is None:
                 local_start = screening.start.astimezone(OSLO_TZ)
                 if local_start.time() == dt_time(0, 0):
-                    all_day_date = screening.start.date()
+                    all_day_date = local_start.date()
                     duration = 0
                     self._warn(
                         f"{event.title}: Starttid er midnatt og sluttid "
@@ -486,15 +477,24 @@ class ProgramScraper:
             duration = DEFAULT_DURATION_MINUTES
         else:
             document = BeautifulSoup(text, "html.parser")
-            duration = parse_duration_minutes(
+            parsed_duration = parse_duration_minutes(
                 document.get_text(" ", strip=True)
             )
-            if duration is None:
+            if parsed_duration is None:
                 self._warn(
                     f"Fann ikkje spilletid på {url}; brukar "
                     f"{DEFAULT_DURATION_MINUTES} minutt."
                 )
                 duration = DEFAULT_DURATION_MINUTES
+            elif not is_plausible_duration(parsed_duration):
+                self._warn(
+                    f"Spilletid på {url} er ugyldig "
+                    f"({parsed_duration} minutt); brukar "
+                    f"{DEFAULT_DURATION_MINUTES} minutt."
+                )
+                duration = DEFAULT_DURATION_MINUTES
+            else:
+                duration = parsed_duration
 
         self.detail_durations[url] = duration
         return duration

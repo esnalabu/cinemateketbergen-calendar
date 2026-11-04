@@ -102,6 +102,35 @@ def test_fetch_duration_falls_back_on_error():
     assert len(warnings) == 1
 
 
+def test_fetch_duration_uses_plausible_detail_duration():
+    warnings = []
+    scraper = uc.ProgramScraper(
+        fetch_detail_durations=True,
+        on_warning=warnings.append,
+    )
+    scraper.fetch_text = lambda _url: (
+        "<html><body><p>Spilletid: 95 min</p></body></html>"
+    )
+
+    assert scraper.fetch_duration_minutes("https://example.com") == 95
+    assert warnings == []
+
+
+def test_fetch_duration_rejects_implausible_detail_duration():
+    warnings = []
+    scraper = uc.ProgramScraper(
+        fetch_detail_durations=True,
+        on_warning=warnings.append,
+    )
+    scraper.fetch_text = lambda _url: (
+        "<html><body><p>Spilletid: 5000 min</p></body></html>"
+    )
+
+    assert scraper.fetch_duration_minutes("https://example.com") == 120
+    assert len(warnings) == 1
+    assert "ugyldig" in warnings[0]
+
+
 def test_parses_time_ranges_from_description():
     assert uc.parse_time_range("Ingen tid oppgitt") is None
     assert uc.parse_time_range("drop-in fra kl. 12 til 15") == (
@@ -118,15 +147,26 @@ def test_parses_time_ranges_from_description():
     )
 
 
-def test_local_range_uses_date_closest_to_source_start():
+def test_local_range_uses_local_date():
     start, end = uc.local_range_to_utc(
         datetime(2026, 11, 21, 23, 0, tzinfo=timezone.utc),
         dt_time(12, 0),
         dt_time(15, 0),
     )
 
-    assert start == datetime(2026, 11, 21, 11, 0, tzinfo=timezone.utc)
-    assert end == datetime(2026, 11, 21, 14, 0, tzinfo=timezone.utc)
+    assert start == datetime(2026, 11, 22, 11, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 11, 22, 14, 0, tzinfo=timezone.utc)
+
+
+def test_local_range_uses_local_date_in_summer_time():
+    start, end = uc.local_range_to_utc(
+        datetime(2026, 7, 1, 22, 0, tzinfo=timezone.utc),
+        dt_time(12, 0),
+        dt_time(15, 0),
+    )
+
+    assert start == datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 7, 2, 13, 0, tzinfo=timezone.utc)
 
 
 def test_ticket_ics_url_appends_suffix_once():
@@ -274,7 +314,7 @@ def test_resolve_screening_corrects_ticketless_time_range():
 
     result = scraper.resolve_screening(event, info)
 
-    assert result.start == datetime(2026, 11, 21, 11, 0, tzinfo=timezone.utc)
+    assert result.start == datetime(2026, 11, 22, 11, 0, tzinfo=timezone.utc)
     assert result.duration_minutes == 180
     assert result.all_day_date is None
     assert any("Korrigerer starttid" in warning for warning in warnings)
@@ -298,8 +338,9 @@ def test_resolve_screening_uses_all_day_for_midnight_without_range():
 
     result = scraper.resolve_screening(event, info)
 
-    assert result.all_day_date == date(2026, 11, 21)
+    assert result.all_day_date == date(2026, 11, 22)
     assert result.duration_minutes == 0
+    assert any("2026-11-22" in warning for warning in warnings)
     assert any("heildagsevent" in warning for warning in warnings)
 
 
