@@ -6,22 +6,19 @@ oppdatert automatisk kvar måndag av ein GitHub Actions-jobb.
 
 ## Abonner
 
-Tilrådd URL via GitHub Pages:
+Kalenderen ligg på GitHub Pages:
 
 ```text
 https://esnalabu.github.io/cinemateketbergen-calendar/cinemateketbergen.ics
 ```
 
-Reserve-URL frå rå GitHub:
-
-```text
-https://raw.githubusercontent.com/esnalabu/cinemateketbergen-calendar/main/cinemateketbergen.ics
-```
-
 GitHub Pages må aktiverast éin gong under **Settings → Pages** med
-**Deploy from a branch: main / (root)**. `.nojekyll` ligg i rota slik at Pages
-publiserer filene utan Jekyll-bygg. GitHub Pages serverer `.ics` som
-`text/calendar`, som er det kalenderappane forventar.
+**Build and deployment → Source: GitHub Actions**. Workflowen publiserer berre
+kalenderfila, ikkje resten av repoet. Actions Pages køyrer ikkje Jekyll, så
+`.nojekyll` er ikkje naudsynt. GitHub Pages serverer `.ics` som `text/calendar`,
+som er det kalenderappane forventar.
+
+Den tidlegare reserve-URL-en til rå GitHub er fjerna; bruk Pages-URL-en.
 
 Repoet eller Pages-sida må vere offentleg tilgjengeleg for at abonnementet skal
 fungere utan autentisering.
@@ -34,9 +31,11 @@ Workflowen `.github/workflows/update-calendar.yml` køyrer:
 - manuelt via `workflow_dispatch`.
 
 Jobben køyrer testane, hentar programmet, genererer
-`cinemateketbergen.ics`, validerer fila og committar ho berre dersom innhaldet
-er endra. Viss noko feilar, vert den gamle fila ståande urørt. Workflowen krev
-minst 10 visingar, slik at ein delvis øydelagd parse ikkje overskriv kalenderen.
+`_site/cinemateketbergen.ics`, validerer fila og publiserer ho til GitHub Pages.
+Før generering prøver han å hente den førre publiserte kalenderen, slik at
+`DTSTAMP` og `SEQUENCE` blir bevarte for hendingar som ikkje har endra seg. Viss
+noko feilar, vert den førre publiserte fila ståande urørt. Workflowen krev minst
+10 visingar, slik at ein delvis øydelagd parse ikkje overskriv kalenderen.
 
 Skriptet:
 

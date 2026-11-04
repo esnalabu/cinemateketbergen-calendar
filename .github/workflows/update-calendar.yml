@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: update-cinemateket-calendar
@@ -33,33 +33,30 @@ jobs:
       - name: Køyr testar
         run: uv run pytest -q
 
-      - name: Oppdater kalenderfil
-        run: uv run python scripts/update_calendar.py --min-events 10
-
-      - name: Førebu Pages-artifact
+      - name: Hent førre publiserte kalender
+        env:
+          PAGES_URL: https://esnalabu.github.io/cinemateketbergen-calendar/cinemateketbergen.ics
         run: |
           mkdir -p _site
-          cp cinemateketbergen.ics _site/
+          if curl -fsSL --max-time 30 "$PAGES_URL" -o _site/cinemateketbergen.ics; then
+            echo "Henta førre publiserte kalender."
+          else
+            rm -f _site/cinemateketbergen.ics
+            echo "Fann ikkje førre publiserte kalender; alle hendingar får nytt DTSTAMP." >&2
+          fi
+
+      - name: Oppdater kalenderfil
+        run: |
+          uv run python scripts/update_calendar.py \
+            --min-events 10 \
+            --output _site/cinemateketbergen.ics
 
       - name: Last opp Pages-artifact
         uses: actions/upload-pages-artifact@v5
         with:
           path: _site/
 
-      - name: Commit og push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cinemateketbergen.ics
-          if git diff --cached --quiet -- cinemateketbergen.ics; then
-            echo "Ingen endringar i kalenderfila."
-            exit 0
-          fi
-          git commit -m "Oppdater filmprogram for Cinemateket Bergen"
-          git push
-
   deploy:
-    if: github.event_name == 'workflow_dispatch'
     needs: update
     runs-on: ubuntu-slim
     timeout-minutes: 10
