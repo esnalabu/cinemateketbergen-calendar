@@ -29,6 +29,15 @@ def find_event(content: str):
     return events[0]
 
 
+def find_events(content: str):
+    calendar = Calendar.from_ical(content)
+    return {
+        str(item["UID"]): item
+        for item in calendar.walk()
+        if item.name == "VEVENT"
+    }
+
+
 def test_uid_is_deterministic_for_the_same_screening():
     first = uc.uid_for(screening())
     second = uc.uid_for(screening())
@@ -175,3 +184,136 @@ def test_ticketless_uid_is_stable_for_all_day_event():
     all_day.all_day_date = date(2026, 11, 1)
 
     assert uc.uid_for(timed) == uc.uid_for(all_day)
+
+
+def test_unchanged_event_keeps_dtstamp_and_output_is_identical():
+    first_time = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    second_time = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    first = uc.build_calendar([screening()], now=first_time)
+    second = uc.build_calendar(
+        [screening()], now=second_time, previous_content=first
+    )
+
+    event = find_event(second)
+    assert event.decoded("dtstamp") == first_time
+    assert int(event["SEQUENCE"]) == 0
+    assert second == first
+
+
+def test_changed_event_gets_new_dtstamp_and_incremented_sequence():
+    first_time = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    second_time = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    first = uc.build_calendar([screening()], now=first_time)
+    changed = screening()
+    changed.title = "ENDRET FILM"
+
+    second = uc.build_calendar(
+        [changed], now=second_time, previous_content=first
+    )
+    event = find_event(second)
+
+    assert event.decoded("dtstamp") == second_time
+    assert int(event["SEQUENCE"]) == 1
+
+
+def test_sequence_increments_on_each_change():
+    first_time = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    second_time = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    third_time = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+    first = uc.build_calendar([screening()], now=first_time)
+    changed = screening()
+    changed.title = "ENDRET FILM"
+    second = uc.build_calendar(
+        [changed], now=second_time, previous_content=first
+    )
+    changed_again = screening()
+    changed_again.title = "ENDRET IGJEN"
+
+    third = uc.build_calendar(
+        [changed_again], now=third_time, previous_content=second
+    )
+    event = find_event(third)
+
+    assert event.decoded("dtstamp") == third_time
+    assert int(event["SEQUENCE"]) == 2
+
+
+def test_new_event_gets_current_dtstamp_and_sequence_zero():
+    first_time = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    second_time = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    previous = uc.build_calendar(
+        [
+            screening(
+                ticket_url=(
+                    "https://cinemateketbergen.ticketco.events/"
+                    "no/nb/e/annafilm__222_kl_1800"
+                )
+            )
+        ],
+        now=first_time,
+    )
+
+    content = uc.build_calendar(
+        [screening()], now=second_time, previous_content=previous
+    )
+    event = find_event(content)
+
+    assert event.decoded("dtstamp") == second_time
+    assert int(event["SEQUENCE"]) == 0
+
+
+def test_only_changed_event_gets_new_dtstamp():
+    first_time = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    second_time = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    other = screening(
+        ticket_url=(
+            "https://cinemateketbergen.ticketco.events/"
+            "no/nb/e/annafilm__222_kl_1800"
+        )
+    )
+    first = uc.build_calendar([screening(), other], now=first_time)
+    changed = screening()
+    changed.title = "ENDRET FILM"
+
+    content = uc.build_calendar(
+        [changed, other], now=second_time, previous_content=first
+    )
+    events = find_events(content)
+
+    assert events[uc.uid_for(changed)].decoded("dtstamp") == second_time
+    assert events[uc.uid_for(other)].decoded("dtstamp") == first_time
+    assert int(events[uc.uid_for(changed)]["SEQUENCE"]) == 1
+    assert int(events[uc.uid_for(other)]["SEQUENCE"]) == 0
+
+
+def test_removed_event_is_omitted():
+    first_time = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    second_time = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    other = screening(
+        ticket_url=(
+            "https://cinemateketbergen.ticketco.events/"
+            "no/nb/e/annafilm__222_kl_1800"
+        )
+    )
+    first = uc.build_calendar([screening(), other], now=first_time)
+    assert len(find_events(first)) == 2
+
+    content = uc.build_calendar(
+        [screening()], now=second_time, previous_content=first
+    )
+    events = find_events(content)
+
+    assert len(events) == 1
+    assert uc.uid_for(screening()) in events
+
+
+def test_invalid_previous_content_falls_back_to_current_dtstamp():
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+
+    content = uc.build_calendar(
+        [screening()], now=now, previous_content="ikkje ein gyldig kalender"
+    )
+    event = find_event(content)
+
+    assert event.decoded("dtstamp") == now
+    assert int(event["SEQUENCE"]) == 0

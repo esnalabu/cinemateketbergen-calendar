@@ -77,6 +77,13 @@ class Screening:
     source_start: datetime | None = None
 
 
+@dataclass(frozen=True)
+class PreviousEvent:
+    dtstamp: datetime
+    sequence: int
+    signature: bytes
+
+
 def parse_instant(value: str) -> datetime | None:
     raw = value.strip()
     if raw.endswith("Z"):
@@ -565,10 +572,87 @@ def event_url_for(screening: Screening) -> str:
     return screening.ticket_url or screening.detail_url or PROGRAM_URL
 
 
+def create_event(
+    screening: Screening, dtstamp: datetime, sequence: int
+) -> Event:
+    event = Event()
+    event.add("uid", uid_for(screening))
+    event.add("dtstamp", dtstamp)
+    if screening.all_day_date:
+        event.add("dtstart", screening.all_day_date)
+        event.add("dtend", screening.all_day_date + timedelta(days=1))
+    else:
+        event.add("dtstart", screening.start)
+        event.add(
+            "dtend",
+            screening.start + timedelta(minutes=screening.duration_minutes),
+        )
+    event.add("summary", screening.title)
+    event.add("description", description_for(screening))
+    event.add("location", LOCATION)
+    event.add("url", event_url_for(screening))
+    event.add("categories", ["FILM"])
+    event.add("status", "CONFIRMED")
+    event.add("sequence", sequence)
+    event.add("transp", "OPAQUE")
+    return event
+
+
+def event_signature(event: Event) -> bytes:
+    return b"\r\n".join(
+        line
+        for line in event.to_ical().split(b"\r\n")
+        if not line.startswith((b"DTSTAMP", b"SEQUENCE"))
+    )
+
+
+def previous_events(content: str | None) -> dict[str, PreviousEvent]:
+    if not content:
+        return {}
+
+    try:
+        calendar = Calendar.from_ical(content)
+    except Exception:
+        return {}
+
+    events: dict[str, PreviousEvent] = {}
+    for component in calendar.walk():
+        if component.name != "VEVENT":
+            continue
+
+        uid = str(component.get("UID", "")).strip()
+        if not uid:
+            continue
+
+        try:
+            dtstamp = component.decoded("DTSTAMP")
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not isinstance(dtstamp, datetime):
+            continue
+        if dtstamp.tzinfo is None:
+            dtstamp = dtstamp.replace(tzinfo=timezone.utc)
+
+        try:
+            sequence = int(component.decoded("SEQUENCE"))
+        except (KeyError, TypeError, ValueError):
+            sequence = 0
+
+        events[uid] = PreviousEvent(
+            dtstamp=dtstamp.astimezone(timezone.utc),
+            sequence=max(sequence, 0),
+            signature=event_signature(component),
+        )
+    return events
+
+
 def build_calendar(
-    screenings: Iterable[Screening], now: datetime | None = None
+    screenings: Iterable[Screening],
+    now: datetime | None = None,
+    previous_content: str | None = None,
 ) -> str:
     timestamp = now or datetime.now(timezone.utc)
+    previous = previous_events(previous_content)
     calendar = Calendar()
     calendar.add("prodid", "-//Cinemateket Kalender//NO")
     calendar.add("version", "2.0")
@@ -581,27 +665,15 @@ def build_calendar(
     calendar.add("x-published-ttl", "P1W")
 
     for screening in sorted(screenings, key=lambda item: item.start):
-        event = Event()
-        event.add("uid", uid_for(screening))
-        event.add("dtstamp", timestamp)
-        if screening.all_day_date:
-            event.add("dtstart", screening.all_day_date)
-            event.add("dtend", screening.all_day_date + timedelta(days=1))
+        preview = create_event(screening, timestamp, 0)
+        existing = previous.get(uid_for(screening))
+        if existing and existing.signature == event_signature(preview):
+            dtstamp = existing.dtstamp
+            sequence = existing.sequence
         else:
-            event.add("dtstart", screening.start)
-            event.add(
-                "dtend",
-                screening.start + timedelta(minutes=screening.duration_minutes),
-            )
-        event.add("summary", screening.title)
-        event.add("description", description_for(screening))
-        event.add("location", LOCATION)
-        event.add("url", event_url_for(screening))
-        event.add("categories", ["FILM"])
-        event.add("status", "CONFIRMED")
-        event.add("sequence", 0)
-        event.add("transp", "OPAQUE")
-        calendar.add_component(event)
+            dtstamp = timestamp
+            sequence = existing.sequence + 1 if existing else 0
+        calendar.add_component(create_event(screening, dtstamp, sequence))
 
     return calendar.to_ical().decode("utf-8")
 
@@ -670,7 +742,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    content = build_calendar(screenings)
+    previous_content = (
+        args.output.read_text(encoding="utf-8")
+        if args.output.exists()
+        else None
+    )
+    content = build_calendar(screenings, previous_content=previous_content)
     write_atomic(args.output, content)
     print(f"Skreiv {len(screenings)} visingar til {args.output}")
     return 0
