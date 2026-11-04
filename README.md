@@ -1,76 +1,45 @@
 # Cinemateket Bergen kalender
 
-Dette repoet genererer ei ICS-fil med filmprogrammet til
-[Cinemateket Bergen](https://www.cinemateketbergen.no/program). Fila vert
-oppdatert automatisk kvar måndag av ein GitHub Actions-jobb.
+Dette repoet lagar ein abonnementskalender (ICS) med filmprogrammet til
+[Cinemateket Bergen](https://www.cinemateketbergen.no/program). Kalenderen blir
+oppdatert automatisk kvar måndag.
 
 ## Abonner
 
-Kalenderen ligg på GitHub Pages:
+Legg til denne adressa som ekstern kalender i kalenderappen din:
 
 ```text
 https://esnalabu.github.io/cinemateketbergen-calendar/cinemateketbergen.ics
 ```
 
-GitHub Pages må aktiverast éin gong under **Settings → Pages** med
-**Build and deployment → Source: GitHub Actions**. Workflowen publiserer berre
-kalenderfila, ikkje resten av repoet. Actions Pages køyrer ikkje Jekyll, så
-`.nojekyll` er ikkje naudsynt. GitHub Pages serverer `.ics` som `text/calendar`,
-som er det kalenderappane forventar.
+Kalenderen er offentleg og krev ingen innlogging.
 
-Den tidlegare reserve-URL-en til rå GitHub er fjerna; bruk Pages-URL-en.
+## Oppdatering
 
-Repoet eller Pages-sida må vere offentleg tilgjengeleg for at abonnementet skal
-fungere utan autentisering.
+Programmet blir henta frå Cinemateket sine nettsider. Kalenderen blir oppdatert
+kvar måndag. Dersom ei oppdatering feilar, blir den sist publiserte kalenderen
+liggjande.
 
-## Kva som skjer
-
-Workflowen `.github/workflows/update-calendar.yml` køyrer:
-
-- kvar måndag kl. 06:00 UTC,
-- manuelt via `workflow_dispatch`.
-
-Jobben køyrer testane, hentar programmet, genererer
-`_site/cinemateketbergen.ics`, validerer fila og publiserer ho til GitHub Pages.
-Før generering prøver han å hente den førre publiserte kalenderen, slik at
-`DTSTAMP` og `SEQUENCE` blir bevarte for hendingar som ikkje har endra seg. Viss
-noko feilar, vert den førre publiserte fila ståande urørt. Workflowen krev minst
-10 visingar, slik at ein delvis øydelagd parse ikkje overskriv kalenderen.
-
-Skriptet:
-
-- hentar `https://www.cinemateketbergen.no/program`,
-- les `schema.org/ScreeningEvent`-markup,
-- hentar start og slutt frå Ticketco-ICS for billettvisingar,
-- validerer varigheit og fell tilbake til `Spilletid:` eller 120 minutt,
-- rettar billettlause visingar med tydeleg tidsrange i skildringa,
-- lagar heildagsevent når berre dato er truverdig,
-- dedupliserer visingar som førekjem fleire gonger i HTML-en,
-- tek med billettlause arrangement med fallback-UID,
-- skriv UTC-tider til ICS.
+Kalenderappar hentar endringar på eiga tid. Google Calendar kan bruke timar eller
+dagar før nye eller endra visingar blir synlege.
 
 ## Tid og varigheit
 
-For billettvisingar er Ticketco-ICS (`<ticket_url>.ics`) primærkjelde for start
-og slutt. Han blir sanity-sjekka: dersom varigheita er openbert feil, til dømes
-fleire dagar, brukar skriptet `Spilletid:` frå arrangementssida eller 120
-minutt.
+For visingar med billettar er Ticketco sin ICS-fil hovudkjelda for start- og
+sluttid. Dersom sluttida manglar eller er openbert feil, brukar kalenderen
+spilletida som er oppgitt på arrangementssida, eller 120 minutt som standard.
 
-For billettlause visingar prøver skriptet å lese eit tydeleg tidsintervall frå
-skildringa, til dømes «drop-in fra kl. 12 til 15». Viss ingen truverdig tid
-finst, og visinga startar ved midnatt, blir ho lagt inn som heildagsevent på
-datoen frå kjelda.
+For arrangement utan billettar blir eit tydeleg tidsintervall i skildringa brukt
+når det finst. Viss berre datoen er truverdig, blir arrangementet lagt inn som
+heildagsevent.
 
 Prioritet:
 
 1. Ticketco-ICS for billettvisingar
-2. tidsrange i skildringa for billettlause visingar
-3. strukturert starttid frå programmet
+2. tidsintervall i skildringa
+3. oppgitt starttid i programmet
 4. heildagsevent når berre dato er truverdig
-5. hopp over visinga dersom ho ikkje kan plasserast
-
-Alle korrigeringar og fallbackar blir skrivne som åtvaringar til `stderr`, slik
-at dei er synlege i GitHub Actions-loggen.
+5. visinga blir hoppa over dersom ho ikkje kan plasserast
 
 ## Køyr lokalt
 
@@ -78,32 +47,20 @@ Prosjektet brukar [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run pytest -q
 uv run python scripts/update_calendar.py
+uv run pytest -q
 ```
 
-Skriptet skriv til `cinemateketbergen.ics` i repo-rota som standard. Bruk
-`--output` for annan plass, `--no-detail` for å hoppe over detaljsidene, og
-`--min-events` for å krevje eit minste tal visingar.
-
-## Testar
-
-Testane ligg i `tests/` og køyrer utan nettverk mot
-`tests/fixtures/program_sample.html`, eit syntetisk utdrag av
-programmarkupen. Dei dekkjer mellom anna duplikat, billettlause visingar,
-Ticketco-ICS, varigheitsvalidering, tidskorrigering, heildagsevent,
-spilletidsparsing, UTC-tider, UID-stabilitet, escaping og linjefolding.
+Skriptet skriv til `cinemateketbergen.ics` som standard. Bruk `--output` for å
+velje ei anna fil, `--no-detail` for å hoppe over detaljsidene, og `--min-events`
+for å krevje eit minste tal visingar.
 
 ## Avgrensingar
 
-- `/program` inneheld i praksis inneverande og neste månad. Kalenderen blir
-  derfor ikkje fullstendig for månader lenger fram.
-- Nettsida kan endre markup, noko som kan bryte parsaren. Workflowen feilar då
-  synleg, utan å overskrive den eksisterande ICS-fila.
-- Ticketco-ICS kan i sjeldne tilfelle ha feil sluttid. Slike avvik blir
-  sanity-sjekka og logga.
-- Tidsrange i fritekst er ein heuristikk. Viss teksten er tvitydig, kan
-  skriptet velje feil tid eller falle tilbake til heildagsevent.
-- GitHub Actions kan forseinke planlagde køyringar.
+- Programmet på nettsida dekkjer i praksis inneverande og neste månad. Kalenderen
+  blir derfor ikkje fullstendig for månader lenger fram.
+- Dersom nettsida blir endra, kan oppdateringane feile eller bli utdaterte.
+- Enkelte arrangement kan få feil tid, særleg når tida berre står i fritekst.
+- Planlagde oppdateringar kan bli forseinka.
 - Kalenderappar oppdaterer abonnement på eiga tid; Google Calendar kan bruke
   timar eller dagar.
